@@ -1,494 +1,812 @@
+"""
+OPERATIONAL COMPASS — Visualização de Fluxo
+Tema: Obsidian Canvas Light Mode (fiel ao original)
+
+Como executar:
+  pip install dash dash-cytoscape
+  python fluxo_obsidian_light.py
+  Acesse: http://127.0.0.1:8050
+
+Coloque o arquivo FLUXO_FINAL.canvas na mesma pasta.
+"""
+
 import os
 import json
 import dash
 from dash import html, dcc, Input, Output, State
 import dash_cytoscape as cyto
 
-# Ativa layouts extras para o Cytoscape, se necessário
 cyto.load_extra_layouts()
 
-# -----------------------------------------------------------------------------
-# 1. MAPEAMENTO DE CORES (Tema Claro Executivo)
-# -----------------------------------------------------------------------------
-COLOR_MAP = {
-    "1": {"bg": "rgba(168, 168, 168, 0.04)", "stroke": "#64748b"}, # Cinza (Conciliação)
-    "2": {"bg": "rgba(224, 155, 67, 0.04)",  "stroke": "#b45309"}, # Laranja (Análise Final)
-    "3": {"bg": "rgba(100, 184, 115, 0.04)", "stroke": "#15803d"}, # Verde (POCs)
-    "4": {"bg": "rgba(224, 91, 91, 0.04)",   "stroke": "#b91c1c"}, # Vermelho (Análises Nominais)
-    "5": {"bg": "rgba(83, 155, 224, 0.04)",  "stroke": "#1d4ed8"}, # Azul (Bases)
-    "6": {"bg": "rgba(174, 114, 224, 0.04)", "stroke": "#6d28d9"}, # Roxo (Gatilhos)
+# ─────────────────────────────────────────────────────────────
+# 1. PALETA FIEL AO OBSIDIAN CANVAS — TEMA CLARO
+#    Cores extraídas do app.css do Obsidian (tema Default Light)
+# ─────────────────────────────────────────────────────────────
+# Cada cor do canvas mapeia para: fundo do card, borda, fundo do grupo, label do grupo
+OBS_COLORS = {
+    "1": {  # Cinza — CONCILIAÇÃO E RESULTADO
+        "node_bg":    "#ffffff",
+        "node_border":"#8b8b8b",
+        "node_text":  "#1a1a1a",
+        "group_bg":   "rgba(139,139,139,0.07)",
+        "group_border":"rgba(139,139,139,0.4)",
+        "group_label":"#5a5a5a",
+        "edge":       "#8b8b8b",
+        "tag_bg":     "#f0f0f0",
+        "tag_text":   "#5a5a5a",
+    },
+    "2": {  # Amarelo/Laranja — ANÁLISE FINAL
+        "node_bg":    "#fffdf5",
+        "node_border":"#e6a817",
+        "node_text":  "#4a3200",
+        "group_bg":   "rgba(230,168,23,0.06)",
+        "group_border":"rgba(230,168,23,0.35)",
+        "group_label":"#b07d00",
+        "edge":       "#d4920f",
+        "tag_bg":     "#fef9e7",
+        "tag_text":   "#9a6e00",
+    },
+    "3": {  # Verde — POCs / APURAÇÃO
+        "node_bg":    "#f5fdf6",
+        "node_border":"#2ea043",
+        "node_text":  "#0d3319",
+        "group_bg":   "rgba(46,160,67,0.06)",
+        "group_border":"rgba(46,160,67,0.3)",
+        "group_label":"#217a32",
+        "edge":       "#2ea043",
+        "tag_bg":     "#edfaf0",
+        "tag_text":   "#1a6128",
+    },
+    "4": {  # Vermelho/Rosa — CONFERÊNCIAS NOMINAIS
+        "node_bg":    "#fff5f5",
+        "node_border":"#e05252",
+        "node_text":  "#3d0f0f",
+        "group_bg":   "rgba(224,82,82,0.05)",
+        "group_border":"rgba(224,82,82,0.3)",
+        "group_label":"#b03a3a",
+        "edge":       "#d44545",
+        "tag_bg":     "#ffeeee",
+        "tag_text":   "#9c2b2b",
+    },
+    "5": {  # Azul — BASES DE ORÇAMENTO
+        "node_bg":    "#f4f8ff",
+        "node_border":"#3b7dd8",
+        "node_text":  "#0c2252",
+        "group_bg":   "rgba(59,125,216,0.05)",
+        "group_border":"rgba(59,125,216,0.3)",
+        "group_label":"#2559a7",
+        "edge":       "#3b7dd8",
+        "tag_bg":     "#e8f0fd",
+        "tag_text":   "#1e4a8a",
+    },
+    "6": {  # Roxo — GATILHOS
+        "node_bg":    "#faf5ff",
+        "node_border":"#8b5cf6",
+        "node_text":  "#2d1266",
+        "group_bg":   "rgba(139,92,246,0.05)",
+        "group_border":"rgba(139,92,246,0.28)",
+        "group_label":"#6d3ec4",
+        "edge":       "#8b5cf6",
+        "tag_bg":     "#f3ecff",
+        "tag_text":   "#5b33a8",
+    },
 }
 
-# -----------------------------------------------------------------------------
-# 2. PROCESSAMENTO DO CANVAS COM ANINHAMENTO DE GRUPOS SEGURO
-# -----------------------------------------------------------------------------
-def load_canvas_with_groups(filename="FLUXO_FINAL.canvas"):
+SKIP_GROUP_IDS = {"4392351365515c6d", "6283cfcedbf60137"}
+
+
+# ─────────────────────────────────────────────────────────────
+# 2. CARREGAMENTO E PARSE DO CANVAS
+# ─────────────────────────────────────────────────────────────
+def clean_label(raw: str) -> str:
+    """Remove [[...]] e trunca linhas extras."""
+    text = raw.replace("[[", "").replace("]]", "")
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if not lines:
+        return raw
+    first = lines[0]
+    # Remove path prefix (01 - GATILHOS/012 - ...)
+    if "/" in first and len(first) > 40:
+        first = first.split("/")[-1]
+    return first + ("…" if len(lines) > 1 else "")
+
+
+def load_canvas(filename="FLUXO_FINAL.canvas"):
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    filepath = os.path.join(script_dir, filename)
-    
-    if not os.path.exists(filepath):
-        filepath = filename
-        
-    with open(filepath, "r", encoding="utf-8") as f:
+    path = os.path.join(script_dir, filename)
+    if not os.path.exists(path):
+        path = filename
+    with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    
+
     nodes = data.get("nodes", [])
     edges = data.get("edges", [])
-    
-    group_nodes = [n for n in nodes if n.get("type") == "group"]
-    standard_nodes = [n for n in nodes if n.get("type") != "group"]
-    
+    groups = [n for n in nodes if n.get("type") == "group"]
+    texts  = [n for n in nodes if n.get("type") == "text"]
+
     elements = []
-    
-    # 1. Adicionar as caixas de Macro-Grupo (Cantos arredondados)
-    for g in group_nodes:
-        color_cfg = COLOR_MAP.get(g.get("color", "1"), {"bg": "rgba(0,0,0,0.01)", "stroke": "#cbd5e1"})
-        label_grupo = g.get("label", "").upper()
+
+    # Grupos principais (excluindo sub-grupos menores)
+    for g in groups:
+        if g["id"] in SKIP_GROUP_IDS:
+            continue
+        c = OBS_COLORS.get(g.get("color", "1"))
         elements.append({
             "data": {
-                "id": g["id"],
-                "label": label_grupo,
-                "stroke_color": color_cfg["stroke"],
-                "bg_color": color_cfg["bg"]
+                "id":           g["id"],
+                "label":        g.get("label", "").upper(),
+                "group_border": c["group_border"],
+                "group_bg":     c["group_bg"],
+                "group_label":  c["group_label"],
             },
-            "position": {"x": g["x"] + (g["width"] / 2), "y": g["y"] + (g["height"] / 2)},
-            "classes": "group-box"
+            "position": {
+                "x": g["x"] + g["width"] / 2,
+                "y": g["y"] + g["height"] / 2,
+            },
+            "classes": "obs-group",
         })
 
-    # 2. Adicionar os Cards de Processo (Design Arredondado Elegante)
-    for n in standard_nodes:
-        node_id = n["id"]
-        raw_text = n.get("text", n.get("label", node_id))
-        
-        label = raw_text.replace("[[", "").replace("]]", "").split('\n')[0]
-        if len(raw_text.split('\n')) > 1:
-            label += "..."
-            
-        color_cfg = COLOR_MAP.get(n.get("color", "1"), {"bg": "#ffffff", "stroke": "#cbd5e1"})
-        
-        parent_id = None
+    # Nós de texto
+    for n in texts:
+        nid   = n["id"]
+        raw   = n.get("text", "")
+        color = n.get("color", "1")
+        c     = OBS_COLORS.get(color, OBS_COLORS["1"])
+
+        # Determinar grupo pai por sobreposição geométrica
+        parent = None
         nx, ny = n["x"], n["y"]
-        for g in group_nodes:
-            if (g["x"] <= nx <= g["x"] + g["width"]) and (g["y"] <= ny <= g["y"] + g["height"]):
-                parent_id = g["id"]
+        nw, nh = n.get("width", 200), n.get("height", 60)
+        for g in groups:
+            if g["id"] in SKIP_GROUP_IDS:
+                continue
+            if (g["x"] <= nx and g["y"] <= ny and
+                    g["x"] + g["width"]  >= nx + nw and
+                    g["y"] + g["height"] >= ny + nh):
+                parent = g["id"]
                 break
 
         node_data = {
-            "id": node_id,
-            "label": label,
-            "full_text": raw_text,
-            "stroke_color": color_cfg["stroke"],
-            "bg_color": "#ffffff"
+            "id":          nid,
+            "label":       clean_label(raw),
+            "full_text":   raw.replace("[[", "").replace("]]", ""),
+            "color_key":   color,
+            "node_bg":     c["node_bg"],
+            "node_border": c["node_border"],
+            "node_text":   c["node_text"],
+            "tag_bg":      c["tag_bg"],
+            "tag_text":    c["tag_text"],
         }
-        if parent_id:
-            node_data["parent"] = parent_id
+        if parent:
+            node_data["parent"] = parent
 
         elements.append({
-            "data": node_data,
+            "data":     node_data,
             "position": {"x": nx, "y": ny},
-            "classes": "process-node"
+            "classes":  "obs-node",
         })
-        
-    # 3. Adicionar as Linhas/Conexões
+
+    # Arestas
     for e in edges:
-        color_cfg = COLOR_MAP.get(e.get("color", "1"), {"stroke": "#94a3b8"})
+        color = e.get("color", "1")
+        c = OBS_COLORS.get(color, OBS_COLORS["1"])
         elements.append({
             "data": {
-                "id": e["id"],
+                "id":     e["id"],
                 "source": e["fromNode"],
                 "target": e["toNode"],
-                "color": color_cfg["stroke"]
+                "color":  c["edge"],
             },
-            "classes": "base-edge"
+            "classes": "obs-edge",
         })
-        
+
     return elements
 
-elements = load_canvas_with_groups()
 
-# -----------------------------------------------------------------------------
-# 3. DESIGN SYSTEM PREMIUM (Bordas Arredondadas e Suavidade)
-# -----------------------------------------------------------------------------
+elements = load_canvas()
+
+
+# ─────────────────────────────────────────────────────────────
+# 3. STYLESHEET — fiel ao Obsidian Canvas Light
+# ─────────────────────────────────────────────────────────────
 stylesheet = [
+    # ── Grupos ──────────────────────────────────────────────
     {
-        "selector": ".process-node",
+        "selector": ".obs-group",
         "style": {
-            "label": "data(label)",
-            "width": "210px",
-            "height": "65px",
-            "shape": "round-rectangle",
-            "round-corners": "12px",
-            "background-color": "data(bg_color)",
-            "color": "#334155",
-            "border-width": "1.5px",
-            "border-color": "data(stroke_color)",
-            "font-size": "11px",
-            "font-weight": "500",
-            "text-valign": "center",
-            "text-halign": "center",
-            "text-wrap": "wrap",
-            "text-max-width": "190px",
-            "opacity": 1.0,
-            "transition-property": "background-color, border-color, opacity, color, width, line-color",
-            "transition-duration": "0.15s"
-        }
+            "label":              "data(label)",
+            "background-color":   "data(group_bg)",
+            "border-color":       "data(group_border)",
+            "border-width":       "1.5px",
+            "border-style":       "solid",
+            "shape":              "round-rectangle",
+            "corner-radius":      "12px",
+            "color":              "data(group_label)",
+            "font-size":          "10px",
+            "font-weight":        "700",
+            "font-family":        "'DM Sans', 'Segoe UI', sans-serif",
+            "letter-spacing":     "0.08em",
+            "text-valign":        "top",
+            "text-halign":        "center",
+            "text-margin-y":      "-14px",
+            "padding":            "40px",
+            "text-transform":     "uppercase",
+        },
     },
+
+    # ── Cards de Processo ────────────────────────────────────
     {
-        "selector": ".group-box",
+        "selector": ".obs-node",
         "style": {
-            "label": "data(label)",
-            "background-color": "data(bg_color)",
-            "border-width": "1px",
-            "border-color": "data(stroke_color)",
-            "border-style": "solid",
-            "shape": "round-rectangle",
-            "round-corners": "16px",
-            "color": "data(stroke_color)",
-            "font-size": "11px",
-            "font-weight": "700",
-            "text-valign": "top",
-            "text-margin-y": "-12px",
-            "padding": "45px",
-            "opacity": 0.55
-        }
+            "label":              "data(label)",
+            "width":              "200px",
+            "height":             "56px",
+            "shape":              "round-rectangle",
+            "corner-radius":      "8px",
+            "background-color":   "data(node_bg)",
+            "color":              "data(node_text)",
+            "border-width":       "1.5px",
+            "border-color":       "data(node_border)",
+            "font-size":          "11px",
+            "font-weight":        "500",
+            "font-family":        "'DM Sans', 'Segoe UI', sans-serif",
+            "text-valign":        "center",
+            "text-halign":        "center",
+            "text-wrap":          "wrap",
+            "text-max-width":     "180px",
+            # sombra sutil igual ao Obsidian
+            "shadow-blur":        "6px",
+            "shadow-color":       "rgba(0,0,0,0.07)",
+            "shadow-offset-x":    "0px",
+            "shadow-offset-y":    "2px",
+            "shadow-opacity":     "1",
+            "transition-property":"background-color, border-color, opacity, border-width",
+            "transition-duration":"0.12s",
+        },
     },
+
+    # ── Arestas ──────────────────────────────────────────────
     {
-        "selector": ".base-edge",
+        "selector": ".obs-edge",
         "style": {
-            "width": 2,
-            "line-color": "data(color)",
-            "target-arrow-shape": "triangle",
-            "target-arrow-color": "data(color)",
-            "curve-style": "taxi",
-            "taxi-direction": "horizontal",
-            "opacity": 0.35,
-            "transition-property": "opacity, width, line-color",
-            "transition-duration": "0.15s"
-        }
+            "width":               "1.8px",
+            "line-color":          "data(color)",
+            "target-arrow-shape":  "triangle",
+            "target-arrow-color":  "data(color)",
+            "arrow-scale":         "0.9",
+            "curve-style":         "taxi",
+            "taxi-direction":      "horizontal",
+            "taxi-turn":           "40px",
+            "opacity":             "0.45",
+            "transition-property": "opacity, width",
+            "transition-duration": "0.12s",
+        },
     },
+
+    # ── Estados de foco ──────────────────────────────────────
     {
-        "selector": ".faded-node",
-        "style": {"opacity": 0.15, "color": "#94a3b8"}
-    },
-    {
-        "selector": ".faded-edge",
-        "style": {"opacity": 0.02}
-    },
-    {
-        "selector": ".node-focused",
+        "selector": ".state-faded",
         "style": {
-            "opacity": 1.0,
-            "background-color": "#f0f9ff",
-            "color": "#0369a1",
-            "border-color": "#0284c7",
-            "border-width": "3px",
-            "font-weight": "700"
-        }
+            "opacity": "0.1",
+        },
     },
     {
-        "selector": ".node-upstream",
+        "selector": ".state-faded-edge",
         "style": {
-            "opacity": 1.0, 
-            "border-color": "#2563eb", 
-            "border-width": "2.5px", 
-            "color": "#1e40af", 
-            "background-color": "#ffffff",
-            "font-weight": "600"
-        }
+            "opacity": "0.04",
+        },
+    },
+    {
+        "selector": ".state-focused",
+        "style": {
+            "background-color":  "#ffffff",
+            "border-color":      "#0066cc",
+            "border-width":      "2.5px",
+            "color":             "#003d7a",
+            "font-weight":       "700",
+            "shadow-blur":       "12px",
+            "shadow-color":      "rgba(0,102,204,0.18)",
+            "shadow-offset-x":   "0px",
+            "shadow-offset-y":   "0px",
+            "shadow-opacity":    "1",
+            "opacity":           "1",
+            "z-index":           "10",
+        },
+    },
+    {
+        "selector": ".state-upstream",
+        "style": {
+            "border-color":  "#2563eb",
+            "border-width":  "2px",
+            "color":         "#1d3f8a",
+            "opacity":       "1",
+            "font-weight":   "600",
+        },
+    },
+    {
+        "selector": ".state-downstream",
+        "style": {
+            "border-color":  "#16a34a",
+            "border-width":  "2px",
+            "color":         "#0f4a2a",
+            "opacity":       "1",
+            "font-weight":   "600",
+        },
     },
     {
         "selector": ".edge-upstream",
         "style": {
-            "opacity": 1.0, 
-            "width": 3.5, 
-            "line-color": "#2563eb", 
-            "target-arrow-color": "#2563eb"
-        }
-    },
-    {
-        "selector": ".node-downstream",
-        "style": {
-            "opacity": 1.0, 
-            "border-color": "#16a34a", 
-            "border-width": "2.5px", 
-            "color": "#14532d", 
-            "background-color": "#ffffff",
-            "font-weight": "600"
-        }
+            "line-color":          "#2563eb",
+            "target-arrow-color":  "#2563eb",
+            "width":               "2.5px",
+            "opacity":             "0.9",
+        },
     },
     {
         "selector": ".edge-downstream",
         "style": {
-            "opacity": 1.0, 
-            "width": 3.5, 
-            "line-color": "#16a34a", 
-            "target-arrow-color": "#16a34a"
-        }
-    }
+            "line-color":          "#16a34a",
+            "target-arrow-color":  "#16a34a",
+            "width":               "2.5px",
+            "opacity":             "0.9",
+        },
+    },
 ]
 
-# -----------------------------------------------------------------------------
-# 4. MONTAGEM DA INTERFACE (UI DESIGN COM SUPORTE A TOGGLE)
-# -----------------------------------------------------------------------------
+
+# ─────────────────────────────────────────────────────────────
+# 4. LEGENDA DE CORES (espelha o Obsidian)
+# ─────────────────────────────────────────────────────────────
+LEGENDA = [
+    ("1", "CONCILIAÇÃO E RESULTADO"),
+    ("5", "BASES DE ORÇAMENTO"),
+    ("4", "CONFERÊNCIAS NOMINAIS"),
+    ("3", "APURAÇÃO DE POCs"),
+    ("6", "GATILHOS"),
+    ("2", "ANÁLISE FINAL"),
+]
+
+
+def legenda_pill(key, label):
+    c = OBS_COLORS[key]
+    return html.Div(style={
+        "display":       "flex",
+        "alignItems":    "center",
+        "gap":           "7px",
+        "padding":       "4px 10px",
+        "borderRadius":  "20px",
+        "border":        f"1px solid {c['group_border']}",
+        "backgroundColor": c["group_bg"],
+        "fontSize":      "10px",
+        "fontWeight":    "600",
+        "color":         c["group_label"],
+        "letterSpacing": "0.04em",
+        "whiteSpace":    "nowrap",
+    }, children=[
+        html.Div(style={
+            "width":        "7px",
+            "height":       "7px",
+            "borderRadius": "50%",
+            "backgroundColor": c["node_border"],
+            "flexShrink":   "0",
+        }),
+        label,
+    ])
+
+
+# ─────────────────────────────────────────────────────────────
+# 5. INTERFACE
+# ─────────────────────────────────────────────────────────────
 app = dash.Dash(__name__, update_title=None)
 server = app.server
 
+# Opções de pesquisa (apenas nós texto, sem grupos/sub-grupos)
+search_options = [
+    {"label": x["data"]["label"], "value": x["data"]["id"]}
+    for x in elements
+    if "label" in x["data"]
+    and "source" not in x["data"]
+    and not x["data"]["id"].startswith("grp_")
+    and x["data"]["id"] not in SKIP_GROUP_IDS
+]
+
 app.layout = html.Div(style={
-    "backgroundColor": "#ffffff", "fontFamily": "system-ui, -apple-system, sans-serif",
-    "height": "100vh", "display": "flex", "flexDirection": "column", "overflow": "hidden"
+    "backgroundColor": "#f6f8fb",         # fundo canvas Obsidian light
+    "fontFamily":      "'DM Sans', 'Segoe UI', system-ui, sans-serif",
+    "height":          "100vh",
+    "display":         "flex",
+    "flexDirection":   "column",
+    "overflow":        "hidden",
 }, children=[
-    
-    # Header Limpo
+
+    # ── TOPBAR ────────────────────────────────────────────────
     html.Div(style={
-        "height": "65px", "backgroundColor": "#f8fafc", "display": "flex",
-        "alignItems": "center", "justifyContent": "space-between", "padding": "0 30px",
-        "borderBottom": "1px solid #e2e8f0"
+        "height":          "56px",
+        "backgroundColor": "#ffffff",
+        "display":         "flex",
+        "alignItems":      "center",
+        "justifyContent":  "space-between",
+        "padding":         "0 24px",
+        "borderBottom":    "1px solid #e8eaed",
+        "boxShadow":       "0 1px 3px rgba(0,0,0,0.04)",
+        "gap":             "16px",
+        "flexShrink":      "0",
     }, children=[
-        html.Div([
-            html.H2("Operational Architecture & Financial Lineage", style={"color": "#0f172a", "margin": 0, "fontSize": "15px", "fontWeight": "600"}),
-            html.P("Rastreabilidade e governança de processos de ponta a ponta", style={"color": "#64748b", "margin": "2px 0 0 0", "fontSize": "11px"})
+
+        # Título + legenda
+        html.Div(style={"display": "flex", "alignItems": "center", "gap": "20px", "minWidth": 0}, children=[
+            html.Div(style={"flexShrink": 0}, children=[
+                html.Span("Fluxo de Fechamento", style={
+                    "fontSize":   "13px",
+                    "fontWeight": "700",
+                    "color":      "#111827",
+                    "letterSpacing": "-0.01em",
+                }),
+                html.Span(" — Controladoria", style={
+                    "fontSize": "12px",
+                    "color":    "#6b7280",
+                }),
+            ]),
+            # Legenda de cores
+            html.Div(style={
+                "display":    "flex",
+                "gap":        "6px",
+                "flexWrap":   "wrap",
+                "alignItems": "center",
+            }, children=[legenda_pill(k, l) for k, l in LEGENDA]),
         ]),
-        html.Div(style={"display": "flex", "alignItems": "center", "gap": "15px"}, children=[
+
+        # Pesquisa + botão toggle
+        html.Div(style={"display": "flex", "alignItems": "center", "gap": "10px", "flexShrink": 0}, children=[
             dcc.Dropdown(
-                id='search-component',
-                options=[{'label': f"[{x['data'].get('label', '')}]", 'value': x['data']['id']} for x in elements if 'label' in x['data'] and 'source' not in x['data'] and not x['data']['id'].startswith('grp_') and x['data']['id'] not in ['4392351365515c6d', '6283cfcedbf60137']],
-                placeholder="Pesquisar nó ou indicador específico...",
-                style={'width': '340px', 'fontSize': '13px'}
-            ),
-            # BOTÃO DE OCULTAR / MOSTRAR PAINEL
-            html.Button(
-                "Ocultar Filtros", 
-                id="toggle-panel-btn", 
-                n_clicks=0,
+                id="search-node",
+                options=search_options,
+                placeholder="Buscar processo…",
                 style={
-                    "backgroundColor": "#ffffff", "color": "#475569", "border": "1px solid #cbd5e1",
-                    "padding": "8px 14px", "borderRadius": "6px", "fontSize": "12px", "fontWeight": "500",
-                    "cursor": "pointer", "transition": "all 0.15s ease"
-                }
-            )
-        ])
-    ]),
-    
-    # Corpo do Dashboard
-    html.Div(style={"display": "flex", "flex": 1, "overflow": "hidden"}, children=[
-        
-        # Área do Grafo (Viewport do Cytoscape)
-        html.Div(style={"flex": 1, "position": "relative", "backgroundColor": "#ffffff"}, children=[
-            cyto.Cytoscape(
-                id='cytoscape-canvas',
-                elements=elements,
-                style={'width': '100%', 'height': '100%'},
-                stylesheet=stylesheet,
-                layout={'name': 'preset'},
-                zoom=0.4,
-                pan={'x': 100, 'y': 200},
-                minZoom=0.05,
-                maxZoom=2.5
-            )
+                    "width":     "280px",
+                    "fontSize":  "12px",
+                    "border":    "1px solid #e5e7eb",
+                    "borderRadius": "6px",
+                },
+                clearable=True,
+            ),
+            html.Button("⇄ Painel", id="toggle-btn", n_clicks=0, style={
+                "backgroundColor": "#f3f4f6",
+                "color":           "#374151",
+                "border":          "1px solid #d1d5db",
+                "padding":         "6px 14px",
+                "borderRadius":    "6px",
+                "fontSize":        "12px",
+                "fontWeight":      "500",
+                "cursor":          "pointer",
+            }),
         ]),
-        
-        # Painel de Controle Lateral (Com animação suave de fecho e abertura)
-        html.Div(id='inspector-panel', style={
-            "width": "410px", "backgroundColor": "#f8fafc", "borderLeft": "1px solid #e2e8f0",
-            "padding": "25px 30px", "color": "#475569", "display": "flex", "flexDirection": "column",
-            "boxShadow": "-2px 0 12px rgba(0,0,0,0.01)", "transition": "all 0.25s ease-in-out",
-            "overflowX": "hidden", "whiteSpace": "nowrap"
+    ]),
+
+    # ── CORPO ─────────────────────────────────────────────────
+    html.Div(style={"display": "flex", "flex": "1", "overflow": "hidden"}, children=[
+
+        # Grafo
+        html.Div(style={"flex": "1", "position": "relative"}, children=[
+            cyto.Cytoscape(
+                id="cyto-graph",
+                elements=elements,
+                style={"width": "100%", "height": "100%", "backgroundColor": "#f6f8fb"},
+                stylesheet=stylesheet,
+                layout={"name": "preset"},
+                zoom=0.38,
+                pan={"x": 380, "y": 420},
+                minZoom=0.05,
+                maxZoom=3.0,
+            ),
+            # Dica de zoom flutuante
+            html.Div("Scroll para zoom · Arrastar para navegar", style={
+                "position":        "absolute",
+                "bottom":          "16px",
+                "left":            "50%",
+                "transform":       "translateX(-50%)",
+                "fontSize":        "10px",
+                "color":           "#9ca3af",
+                "backgroundColor": "rgba(255,255,255,0.85)",
+                "padding":         "4px 12px",
+                "borderRadius":    "20px",
+                "border":          "1px solid #e5e7eb",
+                "pointerEvents":   "none",
+                "backdropFilter":  "blur(4px)",
+            }),
+        ]),
+
+        # ── PAINEL LATERAL ────────────────────────────────────
+        html.Div(id="side-panel", style={
+            "width":           "360px",
+            "backgroundColor": "#ffffff",
+            "borderLeft":      "1px solid #e8eaed",
+            "display":         "flex",
+            "flexDirection":   "column",
+            "overflow":        "hidden",
+            "transition":      "width 0.22s ease",
+            "flexShrink":      "0",
         }, children=[
-            # Div interna para que os elementos não quebrem durante a animação
-            html.Div(id='panel-content-wrapper', style={"display": "flex", "flexDirection": "column", "flex": 1, "width": "350px"}, children=[
-                html.H3("Filtros & Linhagem", style={"color": "#0f172a", "marginTop": 0, "fontSize": "14px", "fontWeight": "600", "textTransform": "uppercase", "letterSpacing": "0.5px"}),
-                
-                # Seletor de Filtro de Cadeia Dinâmico
-                html.Div(style={"marginBottom": "20px", "marginTop": "5px"}, children=[
-                    html.Label("Modo de Filtro Visual:", style={"fontSize": "11px", "fontWeight": "600", "color": "#64748b", "display": "block", "marginBottom": "6px"}),
+
+            html.Div(style={
+                "padding":       "20px 22px",
+                "flex":          "1",
+                "overflowY":     "auto",
+                "display":       "flex",
+                "flexDirection": "column",
+                "gap":           "16px",
+                "width":         "316px",  # 360 - 44px padding
+            }, children=[
+
+                # Modo de filtro
+                html.Div(children=[
+                    html.Label("Modo de linhagem", style={
+                        "fontSize":   "10px",
+                        "fontWeight": "700",
+                        "color":      "#9ca3af",
+                        "letterSpacing": "0.08em",
+                        "textTransform": "uppercase",
+                        "display":    "block",
+                        "marginBottom": "6px",
+                    }),
                     dcc.Dropdown(
-                        id='filter-mode',
+                        id="filter-mode",
                         options=[
-                            {'label': '🔗 Cadeia Completa (End-to-End)', 'value': 'all'},
-                            {'label': '⬅️ Apenas o que vem ANTES (Origens/Upstream)', 'value': 'before'},
-                            {'label': '➡️ Apenas o que vem DEPOIS (Impactos/Downstream)', 'value': 'after'}
+                            {"label": "⟷  Cadeia completa",          "value": "all"},
+                            {"label": "←  Apenas origens (upstream)", "value": "before"},
+                            {"label": "→  Apenas impactos (downstream)", "value": "after"},
                         ],
-                        value='all',
+                        value="all",
                         clearable=False,
-                        style={'fontSize': '12px', 'borderRadius': '8px'}
-                    )
+                        style={"fontSize": "12px"},
+                    ),
                 ]),
-                
-                html.Hr(style={"borderColor": "#e2e8f0", "margin": "10px 0 20px 0"}),
-                
-                # Conteúdo Informativo Dinâmico
-                html.Div(id='inspector-content', style={"flex": 1, "overflowY": "auto"}, children=[
+
+                html.Hr(style={"border": "none", "borderTop": "1px solid #f0f0f0", "margin": "0"}),
+
+                # Conteúdo dinâmico
+                html.Div(id="panel-detail", children=[
                     html.Div(style={
-                        "border": "1px dashed #cbd5e1", "padding": "20px", "borderRadius": "8px",
-                        "textAlign": "center", "fontSize": "12px", "color": "#64748b"
-                    }, children="Selecione um card para habilitar os filtros de isolamento e auditar o fluxo.")
-                ])
-            ])
-        ])
-    ])
+                        "textAlign":     "center",
+                        "padding":       "32px 16px",
+                        "color":         "#9ca3af",
+                        "fontSize":      "12px",
+                        "border":        "1.5px dashed #e5e7eb",
+                        "borderRadius":  "8px",
+                        "lineHeight":    "1.6",
+                    }, children=[
+                        html.Div("↖", style={"fontSize": "24px", "marginBottom": "8px", "opacity": "0.4"}),
+                        "Clique em qualquer card para ver origens e impactos do processo",
+                    ]),
+                ]),
+            ]),
+        ]),
+    ]),
 ])
 
-# -----------------------------------------------------------------------------
-# 5. CALLBACK PARA OCULTAR / MOSTRAR O PAINEL LATERAL
-# -----------------------------------------------------------------------------
-@app.callback(
-    [Output('inspector-panel', 'style'), 
-     Output('inspector-panel', 'padding'), 
-     Output('toggle-panel-btn', 'children'),
-     Output('toggle-panel-btn', 'style')],
-    [Input('toggle-panel-btn', 'n_clicks')],
-    [State('inspector-panel', 'style'),
-     State('toggle-panel-btn', 'style')]
-)
-def toggle_side_panel(n_clicks, current_panel_style, current_btn_style):
-    panel_style = current_panel_style.copy()
-    btn_style = current_btn_style.copy()
-    
-    # Se o número de cliques for ímpar, oculta o painel
-    if n_clicks % 2 == 1:
-        panel_style["width"] = "0px"
-        panel_style["borderLeft"] = "none"
-        btn_style["backgroundColor"] = "#0284c7"
-        btn_style["color"] = "#ffffff"
-        btn_style["borderColor"] = "#0284c7"
-        return panel_style, "0px", "Mostrar Filtros", btn_style
-    
-    # Caso contrário (par), exibe o painel normalmente
-    panel_style["width"] = "410px"
-    panel_style["borderLeft"] = "1px solid #e2e8f0"
-    btn_style["backgroundColor"] = "#ffffff"
-    btn_style["color"] = "#475569"
-    btn_style["borderColor"] = "#cbd5e1"
-    return panel_style, "25px 30px", "Ocultar Filtros", btn_style
 
-# -----------------------------------------------------------------------------
-# 6. LÓGICA DE FILTRAGEM INTELIGENTE RECURSIVA
-# -----------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────
+# 6. CALLBACKS
+# ─────────────────────────────────────────────────────────────
+
 @app.callback(
-    [Output('cytoscape-canvas', 'elements'), Output('inspector-content', 'children')],
-    [Input('cytoscape-canvas', 'tapNodeData'), Input('search-component', 'value'), Input('filter-mode', 'value')]
+    Output("side-panel", "style"),
+    Output("toggle-btn", "style"),
+    Input("toggle-btn", "n_clicks"),
+    State("side-panel", "style"),
+    State("toggle-btn", "style"),
 )
-def update_architecture_view(tap_data, searched_id, filter_mode):
+def toggle_panel(n, panel_style, btn_style):
+    p = dict(panel_style)
+    b = dict(btn_style)
+    if n % 2 == 1:
+        p["width"] = "0px"
+        b["backgroundColor"] = "#111827"
+        b["color"] = "#ffffff"
+        b["borderColor"] = "#111827"
+    else:
+        p["width"] = "360px"
+        b["backgroundColor"] = "#f3f4f6"
+        b["color"] = "#374151"
+        b["borderColor"] = "#d1d5db"
+    return p, b
+
+
+@app.callback(
+    Output("cyto-graph", "elements"),
+    Output("panel-detail", "children"),
+    Input("cyto-graph", "tapNodeData"),
+    Input("search-node", "value"),
+    Input("filter-mode", "value"),
+)
+def update_view(tap_data, search_id, mode):
+    import dash
     ctx = dash.callback_context
-    trigger = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
-    
+    trigger = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
+
     active_id = None
-    if trigger == 'cytoscape-canvas' and tap_data:
-        active_id = tap_data['id']
-    elif trigger == 'search-component' and searched_id:
-        active_id = searched_id
-    elif trigger == 'filter-mode' and (tap_data or searched_id):
-        active_id = searched_id if searched_id else tap_data['id']
-        
-    if active_id and (active_id.startswith('grp_') or active_id in ['4392351365515c6d', '6283cfcedbf60137']):
+    if trigger == "cyto-graph" and tap_data:
+        active_id = tap_data["id"]
+    elif trigger == "search-node" and search_id:
+        active_id = search_id
+    elif trigger == "filter-mode":
+        active_id = search_id or (tap_data["id"] if tap_data else None)
+
+    # Ignorar grupos
+    if active_id and (
+        active_id.startswith("grp_") or
+        active_id in SKIP_GROUP_IDS
+    ):
         active_id = None
 
+    # ── Sem seleção: resetar ──────────────────────────────────
     if not active_id:
-        cleaned_elements = []
+        reset = []
         for el in elements:
-            cfg = el.copy()
-            nid = cfg["data"].get("id", "")
+            cfg = dict(el)
             if "source" in cfg["data"]:
-                cfg["classes"] = "base-edge"
-            elif nid.startswith("grp_") or nid in ['4392351365515c6d', '6283cfcedbf60137']:
-                cfg["classes"] = "group-box"
+                cfg["classes"] = "obs-edge"
+            elif cfg["data"]["id"].startswith("grp_") or cfg["data"]["id"] in SKIP_GROUP_IDS:
+                cfg["classes"] = "obs-group"
             else:
-                cfg["classes"] = "process-node"
-            cleaned_elements.append(cfg)
-        
-        msg = html.Div(style={
-            "border": "1px dashed #cbd5e1", "padding": "20px", "borderRadius": "8px",
-            "textAlign": "center", "fontSize": "12px", "color": "#64748b"
-        }, children="Selecione um card para habilitar os filtros de isolamento e auditar o fluxo.")
-        return cleaned_elements, msg
+                cfg["classes"] = "obs-node"
+            reset.append(cfg)
 
-    all_edges = [x['data'] for x in elements if 'source' in x['data']]
+        placeholder = html.Div(style={
+            "textAlign": "center", "padding": "32px 16px",
+            "color": "#9ca3af", "fontSize": "12px",
+            "border": "1.5px dashed #e5e7eb", "borderRadius": "8px", "lineHeight": "1.6",
+        }, children=[
+            html.Div("↖", style={"fontSize": "24px", "marginBottom": "8px", "opacity": "0.4"}),
+            "Clique em qualquer card para ver origens e impactos do processo",
+        ])
+        return reset, placeholder
 
-    visited_upstream_nodes = set()
-    visited_upstream_edges = set()
-    def trace_upstream(node_id):
-        for edge in all_edges:
-            if edge['target'] == node_id:
-                if edge['id'] not in visited_upstream_edges:
-                    visited_upstream_edges.add(edge['id'])
-                    if edge['source'] not in visited_upstream_nodes:
-                        visited_upstream_nodes.add(edge['source'])
-                        trace_upstream(edge['source'])
-    trace_upstream(active_id)
+    # ── Traçar upstream / downstream recursivo ────────────────
+    all_edges = [x["data"] for x in elements if "source" in x["data"]]
 
-    visited_downstream_nodes = set()
-    visited_downstream_edges = set()
-    def trace_downstream(node_id):
-        for edge in all_edges:
-            if edge['source'] == node_id:
-                if edge['id'] not in visited_downstream_edges:
-                    visited_downstream_edges.add(edge['id'])
-                    if edge['target'] not in visited_downstream_nodes:
-                        visited_downstream_nodes.add(edge['target'])
-                        trace_downstream(edge['target'])
-    trace_downstream(active_id)
+    upstream_nodes, upstream_edges = set(), set()
+    def trace_up(nid):
+        for e in all_edges:
+            if e["target"] == nid and e["id"] not in upstream_edges:
+                upstream_edges.add(e["id"])
+                upstream_nodes.add(e["source"])
+                trace_up(e["source"])
+    trace_up(active_id)
 
-    updated_elements = []
+    downstream_nodes, downstream_edges = set(), set()
+    def trace_down(nid):
+        for e in all_edges:
+            if e["source"] == nid and e["id"] not in downstream_edges:
+                downstream_edges.add(e["id"])
+                downstream_nodes.add(e["target"])
+                trace_down(e["target"])
+    trace_down(active_id)
+
+    def get_label(nid):
+        return next((x["data"].get("label", nid) for x in elements if x["data"]["id"] == nid), nid)
+
+    def get_color_key(nid):
+        return next((x["data"].get("color_key", "1") for x in elements if x["data"].get("id") == nid), "1")
+
+    # ── Classificar elementos ─────────────────────────────────
+    updated = []
     for el in elements:
-        cfg = el.copy()
-        node_id = cfg["data"].get("id")
-        
+        cfg = dict(el)
+        nid = cfg["data"].get("id", "")
+
         if "source" in cfg["data"]:
-            if filter_mode in ['all', 'before'] and node_id in visited_upstream_edges:
-                cfg["classes"] = "base-edge edge-upstream"
-            elif filter_mode in ['all', 'after'] and node_id in visited_downstream_edges:
-                cfg["classes"] = "base-edge edge-downstream"
+            eid = cfg["data"]["id"]
+            if mode in ("all", "before") and eid in upstream_edges:
+                cfg["classes"] = "obs-edge edge-upstream"
+            elif mode in ("all", "after") and eid in downstream_edges:
+                cfg["classes"] = "obs-edge edge-downstream"
             else:
-                cfg["classes"] = "base-edge faded-edge"
-        elif node_id.startswith("grp_") or node_id in ['4392351365515c6d', '6283cfcedbf60137']:
-            cfg["classes"] = "group-box"
+                cfg["classes"] = "obs-edge state-faded-edge"
+
+        elif nid.startswith("grp_") or nid in SKIP_GROUP_IDS:
+            cfg["classes"] = "obs-group"
+
         else:
-            if node_id == active_id:
-                cfg["classes"] = "process-node node-focused"
-            elif filter_mode in ['all', 'before'] and node_id in visited_upstream_nodes:
-                cfg["classes"] = "process-node node-upstream"
-            elif filter_mode in ['all', 'after'] and node_id in visited_downstream_nodes:
-                cfg["classes"] = "process-node node-downstream"
+            if nid == active_id:
+                cfg["classes"] = "obs-node state-focused"
+            elif mode in ("all", "before") and nid in upstream_nodes:
+                cfg["classes"] = "obs-node state-upstream"
+            elif mode in ("all", "after") and nid in downstream_nodes:
+                cfg["classes"] = "obs-node state-downstream"
             else:
-                cfg["classes"] = "process-node faded-node"
-                
-        updated_elements.append(cfg)
+                cfg["classes"] = "obs-node state-faded"
 
-    selected_node = next(x['data'] for x in elements if x['data']['id'] == active_id)
-    def get_label(component_id):
-        return next((x['data'].get('label', component_id) for x in elements if x['data']['id'] == component_id), component_id)
+        updated.append(cfg)
 
-    upstream_block = html.Div(style={"marginBottom": "20px"}, children=[
-        html.Div(style={"display": "flex", "alignItems": "center", "gap": "8px", "marginBottom": "8px"}, children=[
-            html.Div(style={"width": "8px", "height": "8px", "borderRadius": "50%", "backgroundColor": "#2563eb"}),
-            html.Label(f"Insumos Requeridos ({len(visited_upstream_nodes)} predecessores)", style={"fontSize": "11px", "textTransform": "uppercase", "color": "#2563eb", "fontWeight": "600"})
-        ]),
-        html.Div(style={"backgroundColor": "#ffffff", "padding": "10px 15px", "borderRadius": "8px", "border": "1px solid #e2e8f0", "maxHeight": "140px", "overflowY": "auto"}, children=[
-            html.Ul([html.Li(get_label(u), style={"margin": "4px 0", "fontSize": "12px", "color": "#334155"}) for u in visited_upstream_nodes] if visited_upstream_nodes else [html.Li("Este card é a raiz inicial (Origem absoluta).", style={"fontStyle":"italic", "fontSize": "12px", "color": "#94a3b8"})], style={"paddingLeft": "15px", "margin": 0})
+    # ── Painel de detalhe ─────────────────────────────────────
+    sel = next(x["data"] for x in elements if x["data"]["id"] == active_id)
+    ck  = sel.get("color_key", "1")
+    c   = OBS_COLORS[ck]
+
+    def node_chip(nid, variant="neutral"):
+        ck2 = get_color_key(nid)
+        c2  = OBS_COLORS[ck2]
+        return html.Div(get_label(nid), style={
+            "fontSize":        "11px",
+            "padding":         "4px 10px",
+            "borderRadius":    "5px",
+            "border":          f"1px solid {c2['node_border']}",
+            "backgroundColor": c2["node_bg"],
+            "color":           c2["node_text"],
+            "fontWeight":      "500",
+            "cursor":          "default",
+        })
+
+    def section(title, dot_color, items, empty_msg):
+        return html.Div(children=[
+            html.Div(style={"display": "flex", "alignItems": "center", "gap": "7px", "marginBottom": "8px"}, children=[
+                html.Div(style={
+                    "width": "7px", "height": "7px",
+                    "borderRadius": "50%",
+                    "backgroundColor": dot_color,
+                    "flexShrink": "0",
+                }),
+                html.Span(title, style={
+                    "fontSize": "10px", "fontWeight": "700",
+                    "color": dot_color, "letterSpacing": "0.07em",
+                    "textTransform": "uppercase",
+                }),
+                html.Span(f"({len(items)})", style={"fontSize": "10px", "color": "#9ca3af"}),
+            ]),
+            html.Div(style={
+                "display": "flex", "flexWrap": "wrap", "gap": "5px",
+                "maxHeight": "130px", "overflowY": "auto",
+                "padding": "8px",
+                "backgroundColor": "#fafafa",
+                "borderRadius": "7px",
+                "border": "1px solid #f0f0f0",
+            }, children=(
+                [node_chip(n) for n in items]
+                if items else
+                [html.Span(empty_msg, style={"fontSize": "11px", "color": "#9ca3af", "fontStyle": "italic"})]
+            )),
         ])
-    ]) if filter_mode in ['all', 'before'] else None
 
-    downstream_block = html.Div(children=[
-        html.Div(style={"display": "flex", "alignItems": "center", "gap": "8px", "marginBottom": "8px"}, children=[
-            html.Div(style={"width": "8px", "height": "8px", "borderRadius": "50%", "backgroundColor": "#16a34a"}),
-            html.Label(f"Desdobramentos e Impactos ({len(visited_downstream_nodes)} sucessores)", style={"fontSize": "11px", "textTransform": "uppercase", "color": "#16a34a", "fontWeight": "600"})
-        ]),
-        html.Div(style={"backgroundColor": "#ffffff", "padding": "10px 15px", "borderRadius": "8px", "border": "1px solid #e2e8f0", "maxHeight": "140px", "overflowY": "auto"}, children=[
-            html.Ul([html.Li(get_label(d), style={"margin": "4px 0", "fontSize": "12px", "color": "#334155"}) for d in visited_downstream_nodes] if visited_downstream_nodes else [html.Li("Etapa final. Não existem entregas posteriores.", style={"fontStyle":"italic", "fontSize": "12px", "color": "#94a3b8"})], style={"paddingLeft": "15px", "margin": 0})
-        ])
-    ]) if filter_mode in ['all', 'after'] else None
+    show_up   = mode in ("all", "before")
+    show_down = mode in ("all", "after")
 
-    panel_jsx = html.Div([
-        html.Div(style={"backgroundColor": "#ffffff", "padding": "15px", "borderRadius": "8px", "marginBottom": "20px", "border": "1px solid #e2e8f0", "borderLeft": "4px solid #0284c7"}, children=[
-            html.Label("Foco Selecionado", style={"fontSize": "10px", "textTransform": "uppercase", "color": "#64748b", "fontWeight": "600"}),
-            html.H4(selected_node.get('label', active_id), style={"color": "#0f172a", "margin": "2px 0 0 0", "fontSize": "14px", "fontWeight": "600"}),
-            html.P(selected_node.get('full_text', '').replace("[[", "").replace("]]", ""), style={"fontSize": "11px", "color": "#475569", "marginTop": "6px", "lineHeight": "1.4"})
+    panel = html.Div(style={"display": "flex", "flexDirection": "column", "gap": "14px"}, children=[
+
+        # Card do nó selecionado
+        html.Div(style={
+            "backgroundColor": c["node_bg"],
+            "border":          f"2px solid {c['node_border']}",
+            "borderRadius":    "8px",
+            "padding":         "14px 16px",
+        }, children=[
+            html.Div("Selecionado", style={
+                "fontSize": "9px", "fontWeight": "700",
+                "color": c["node_border"], "letterSpacing": "0.1em",
+                "textTransform": "uppercase", "marginBottom": "4px",
+            }),
+            html.Div(sel.get("label", active_id), style={
+                "fontSize": "14px", "fontWeight": "700",
+                "color": c["node_text"], "lineHeight": "1.3",
+            }),
+            html.Div(sel.get("full_text", ""), style={
+                "fontSize": "11px", "color": "#6b7280",
+                "marginTop": "5px", "lineHeight": "1.5",
+            }) if sel.get("full_text") and sel["full_text"] != sel.get("label") else None,
         ]),
-        upstream_block,
-        downstream_block
+
+        section("Origens", "#2563eb", list(upstream_nodes),
+                "Processo de origem — sem dependências anteriores.")
+        if show_up else None,
+
+        section("Impactos", "#16a34a", list(downstream_nodes),
+                "Etapa final — não alimenta processos posteriores.")
+        if show_down else None,
+
     ])
-    
-    return updated_elements, panel_jsx
 
-if __name__ == '__main__':
-    app.run(debug=True)
+    return updated, panel
+
+
+if __name__ == "__main__":
+    app.run(debug=True, port=8050)
