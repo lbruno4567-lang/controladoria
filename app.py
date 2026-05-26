@@ -1,7 +1,7 @@
 import os
 import json
 import dash
-from dash import html, dcc, Input, Output
+from dash import html, dcc, Input, Output, State
 import dash_cytoscape as cyto
 
 # Ativa layouts extras para o Cytoscape, se necessário
@@ -117,7 +117,7 @@ stylesheet = [
             "width": "210px",
             "height": "65px",
             "shape": "round-rectangle",
-            "round-corners": "12px",  # Curvatura elegante nos cards
+            "round-corners": "12px",
             "background-color": "data(bg_color)",
             "color": "#334155",
             "border-width": "1.5px",
@@ -142,7 +142,7 @@ stylesheet = [
             "border-color": "data(stroke_color)",
             "border-style": "solid",
             "shape": "round-rectangle",
-            "round-corners": "16px",  # Curvatura elegante nas macro-caixas
+            "round-corners": "16px",
             "color": "data(stroke_color)",
             "font-size": "11px",
             "font-weight": "700",
@@ -166,20 +166,13 @@ stylesheet = [
             "transition-duration": "0.15s"
         }
     },
-    
-    # Estados de Interação Dinâmica
     {
         "selector": ".faded-node",
-        "style": {
-            "opacity": 0.15,
-            "color": "#94a3b8"
-        }
+        "style": {"opacity": 0.15, "color": "#94a3b8"}
     },
     {
         "selector": ".faded-edge",
-        "style": {
-            "opacity": 0.02
-        }
+        "style": {"opacity": 0.02}
     },
     {
         "selector": ".node-focused",
@@ -235,10 +228,11 @@ stylesheet = [
 ]
 
 # -----------------------------------------------------------------------------
-# 4. MONTAGEM DA INTERFACE (UI DESIGN COM CANTOS SUAVES)
+# 4. MONTAGEM DA INTERFACE (UI DESIGN COM SUPORTE A TOGGLE)
 # -----------------------------------------------------------------------------
 app = dash.Dash(__name__, update_title=None)
 server = app.server
+
 app.layout = html.Div(style={
     "backgroundColor": "#ffffff", "fontFamily": "system-ui, -apple-system, sans-serif",
     "height": "100vh", "display": "flex", "flexDirection": "column", "overflow": "hidden"
@@ -254,18 +248,31 @@ app.layout = html.Div(style={
             html.H2("Operational Architecture & Financial Lineage", style={"color": "#0f172a", "margin": 0, "fontSize": "15px", "fontWeight": "600"}),
             html.P("Rastreabilidade e governança de processos de ponta a ponta", style={"color": "#64748b", "margin": "2px 0 0 0", "fontSize": "11px"})
         ]),
-        dcc.Dropdown(
-            id='search-component',
-            options=[{'label': f"[{x['data'].get('label', '')}]", 'value': x['data']['id']} for x in elements if 'label' in x['data'] and 'source' not in x['data'] and not x['data']['id'].startswith('grp_') and x['data']['id'] not in ['4392351365515c6d', '6283cfcedbf60137']],
-            placeholder="Pesquisar nó ou indicador específico...",
-            style={'width': '340px', 'fontSize': '13px'}
-        )
+        html.Div(style={"display": "flex", "alignItems": "center", "gap": "15px"}, children=[
+            dcc.Dropdown(
+                id='search-component',
+                options=[{'label': f"[{x['data'].get('label', '')}]", 'value': x['data']['id']} for x in elements if 'label' in x['data'] and 'source' not in x['data'] and not x['data']['id'].startswith('grp_') and x['data']['id'] not in ['4392351365515c6d', '6283cfcedbf60137']],
+                placeholder="Pesquisar nó ou indicador específico...",
+                style={'width': '340px', 'fontSize': '13px'}
+            ),
+            # BOTÃO DE OCULTAR / MOSTRAR PAINEL
+            html.Button(
+                "Ocultar Filtros", 
+                id="toggle-panel-btn", 
+                n_clicks=0,
+                style={
+                    "backgroundColor": "#ffffff", "color": "#475569", "border": "1px solid #cbd5e1",
+                    "padding": "8px 14px", "borderRadius": "6px", "fontSize": "12px", "fontWeight": "500",
+                    "cursor": "pointer", "transition": "all 0.15s ease"
+                }
+            )
+        ])
     ]),
     
-    # Corpo
-    html.Div(style={"display": "flex", "flex": 1}, children=[
+    # Corpo do Dashboard
+    html.Div(style={"display": "flex", "flex": 1, "overflow": "hidden"}, children=[
         
-        # Área do Grafo
+        # Área do Grafo (Viewport do Cytoscape)
         html.Div(style={"flex": 1, "position": "relative", "backgroundColor": "#ffffff"}, children=[
             cyto.Cytoscape(
                 id='cytoscape-canvas',
@@ -280,45 +287,82 @@ app.layout = html.Div(style={
             )
         ]),
         
-        # Painel de Controle e Auditoria Lateral (Bordas internas suavizadas)
+        # Painel de Controle Lateral (Com animação suave de fecho e abertura)
         html.Div(id='inspector-panel', style={
             "width": "410px", "backgroundColor": "#f8fafc", "borderLeft": "1px solid #e2e8f0",
             "padding": "25px 30px", "color": "#475569", "display": "flex", "flexDirection": "column",
-            "boxShadow": "-2px 0 12px rgba(0,0,0,0.01)"
+            "boxShadow": "-2px 0 12px rgba(0,0,0,0.01)", "transition": "all 0.25s ease-in-out",
+            "overflowX": "hidden", "whiteSpace": "nowrap"
         }, children=[
-            html.H3("Filtros & Linhagem", style={"color": "#0f172a", "marginTop": 0, "fontSize": "14px", "fontWeight": "600", "textTransform": "uppercase", "letterSpacing": "0.5px"}),
-            
-            # SELETOR DE FILTRO DE CADEIA (Nova Opção Elegante)
-            html.Div(style={"marginBottom": "20px", "marginTop": "5px"}, children=[
-                html.Label("Modo de Filtro Visual:", style={"fontSize": "11px", "fontWeight": "600", "color": "#64748b", "display": "block", "marginBottom": "6px"}),
-                dcc.Dropdown(
-                    id='filter-mode',
-                    options=[
-                        {'label': '🔗 Cadeira Completa (End-to-End)', 'value': 'all'},
-                        {'label': '⬅️ Apenas o que vem ANTES (Origens/Upstream)', 'value': 'before'},
-                        {'label': '➡️ Apenas o que vem DEPOIS (Impactos/Downstream)', 'value': 'after'}
-                    ],
-                    value='all',
-                    clearable=False,
-                    style={'fontSize': '12px', 'borderRadius': '8px'}
-                )
-            ]),
-            
-            html.Hr(style={"borderColor": "#e2e8f0", "margin": "10px 0 20px 0"}),
-            
-            # Conteúdo Dinâmico
-            html.Div(id='inspector-content', style={"flex": 1, "overflowY": "auto"}, children=[
-                html.Div(style={
-                    "border": "1px dashed #cbd5e1", "padding": "20px", "borderRadius": "8px",
-                    "textAlign": "center", "fontSize": "12px", "color": "#64748b"
-                }, children="Selecione um card para habilitar os filtros de isolamento e auditar o fluxo.")
+            # Div interna para que os elementos não quebrem durante a animação
+            html.Div(id='panel-content-wrapper', style={"display": "flex", "flexDirection": "column", "flex": 1, "width": "350px"}, children=[
+                html.H3("Filtros & Linhagem", style={"color": "#0f172a", "marginTop": 0, "fontSize": "14px", "fontWeight": "600", "textTransform": "uppercase", "letterSpacing": "0.5px"}),
+                
+                # Seletor de Filtro de Cadeia Dinâmico
+                html.Div(style={"marginBottom": "20px", "marginTop": "5px"}, children=[
+                    html.Label("Modo de Filtro Visual:", style={"fontSize": "11px", "fontWeight": "600", "color": "#64748b", "display": "block", "marginBottom": "6px"}),
+                    dcc.Dropdown(
+                        id='filter-mode',
+                        options=[
+                            {'label': '🔗 Cadeia Completa (End-to-End)', 'value': 'all'},
+                            {'label': '⬅️ Apenas o que vem ANTES (Origens/Upstream)', 'value': 'before'},
+                            {'label': '➡️ Apenas o que vem DEPOIS (Impactos/Downstream)', 'value': 'after'}
+                        ],
+                        value='all',
+                        clearable=False,
+                        style={'fontSize': '12px', 'borderRadius': '8px'}
+                    )
+                ]),
+                
+                html.Hr(style={"borderColor": "#e2e8f0", "margin": "10px 0 20px 0"}),
+                
+                # Conteúdo Informativo Dinâmico
+                html.Div(id='inspector-content', style={"flex": 1, "overflowY": "auto"}, children=[
+                    html.Div(style={
+                        "border": "1px dashed #cbd5e1", "padding": "20px", "borderRadius": "8px",
+                        "textAlign": "center", "fontSize": "12px", "color": "#64748b"
+                    }, children="Selecione um card para habilitar os filtros de isolamento e auditar o fluxo.")
+                ])
             ])
         ])
     ])
 ])
 
 # -----------------------------------------------------------------------------
-# 5. LÓGICA DE FILTRAGEM INTELIGENTE RECURSIVA
+# 5. CALLBACK PARA OCULTAR / MOSTRAR O PAINEL LATERAL
+# -----------------------------------------------------------------------------
+@app.callback(
+    [Output('inspector-panel', 'style'), 
+     Output('inspector-panel', 'padding'), 
+     Output('toggle-panel-btn', 'children'),
+     Output('toggle-panel-btn', 'style')],
+    [Input('toggle-panel-btn', 'n_clicks')],
+    [State('inspector-panel', 'style'),
+     State('toggle-panel-btn', 'style')]
+)
+def toggle_side_panel(n_clicks, current_panel_style, current_btn_style):
+    panel_style = current_panel_style.copy()
+    btn_style = current_btn_style.copy()
+    
+    # Se o número de cliques for ímpar, oculta o painel
+    if n_clicks % 2 == 1:
+        panel_style["width"] = "0px"
+        panel_style["borderLeft"] = "none"
+        btn_style["backgroundColor"] = "#0284c7"
+        btn_style["color"] = "#ffffff"
+        btn_style["borderColor"] = "#0284c7"
+        return panel_style, "0px", "Mostrar Filtros", btn_style
+    
+    # Caso contrário (par), exibe o painel normalmente
+    panel_style["width"] = "410px"
+    panel_style["borderLeft"] = "1px solid #e2e8f0"
+    btn_style["backgroundColor"] = "#ffffff"
+    btn_style["color"] = "#475569"
+    btn_style["borderColor"] = "#cbd5e1"
+    return panel_style, "25px 30px", "Ocultar Filtros", btn_style
+
+# -----------------------------------------------------------------------------
+# 6. LÓGICA DE FILTRAGEM INTELIGENTE RECURSIVA
 # -----------------------------------------------------------------------------
 @app.callback(
     [Output('cytoscape-canvas', 'elements'), Output('inspector-content', 'children')],
@@ -334,7 +378,6 @@ def update_architecture_view(tap_data, searched_id, filter_mode):
     elif trigger == 'search-component' and searched_id:
         active_id = searched_id
     elif trigger == 'filter-mode' and (tap_data or searched_id):
-        # Se mudou o filtro mas já tinha algo selecionado, mantém o foco ativo
         active_id = searched_id if searched_id else tap_data['id']
         
     if active_id and (active_id.startswith('grp_') or active_id in ['4392351365515c6d', '6283cfcedbf60137']):
@@ -353,12 +396,14 @@ def update_architecture_view(tap_data, searched_id, filter_mode):
                 cfg["classes"] = "process-node"
             cleaned_elements.append(cfg)
         
-        msg = html.Div(style={"border": "1px dashed #cbd5e1", "padding": "20px", "borderRadius": "8px", "textAlign": "center", "fontSize": "12px", "color": "#64748b"}, children="Selecione um card para habilitar os filtros de isolamento e auditar o fluxo.")
+        msg = html.Div(style={
+            "border": "1px dashed #cbd5e1", "padding": "20px", "borderRadius": "8px",
+            "textAlign": "center", "fontSize": "12px", "color": "#64748b"
+        }, children="Selecione um card para habilitar os filtros de isolamento e auditar o fluxo.")
         return cleaned_elements, msg
 
     all_edges = [x['data'] for x in elements if 'source' in x['data']]
 
-    # 1. Mapeamento Recursivo para Trás (Antes / Upstream)
     visited_upstream_nodes = set()
     visited_upstream_edges = set()
     def trace_upstream(node_id):
@@ -371,7 +416,6 @@ def update_architecture_view(tap_data, searched_id, filter_mode):
                         trace_upstream(edge['source'])
     trace_upstream(active_id)
 
-    # 2. Mapeamento Recursivo para Frente (Depois / Downstream)
     visited_downstream_nodes = set()
     visited_downstream_edges = set()
     def trace_downstream(node_id):
@@ -384,7 +428,6 @@ def update_architecture_view(tap_data, searched_id, filter_mode):
                         trace_downstream(edge['target'])
     trace_downstream(active_id)
 
-    # 3. Construção dos Elementos Finais Baseados no Tipo de Filtro Escolhido
     updated_elements = []
     for el in elements:
         cfg = el.copy()
@@ -411,12 +454,10 @@ def update_architecture_view(tap_data, searched_id, filter_mode):
                 
         updated_elements.append(cfg)
 
-    # UI do Painel Lateral Customizado por Filtro
     selected_node = next(x['data'] for x in elements if x['data']['id'] == active_id)
     def get_label(component_id):
         return next((x['data'].get('label', component_id) for x in elements if x['data']['id'] == component_id), component_id)
 
-    # Monta os blocos informativos baseado nas escolhas
     upstream_block = html.Div(style={"marginBottom": "20px"}, children=[
         html.Div(style={"display": "flex", "alignItems": "center", "gap": "8px", "marginBottom": "8px"}, children=[
             html.Div(style={"width": "8px", "height": "8px", "borderRadius": "50%", "backgroundColor": "#2563eb"}),
