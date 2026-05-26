@@ -238,7 +238,7 @@ stylesheet = [
 # 4. MONTAGEM DA INTERFACE (UI DESIGN COM CANTOS SUAVES)
 # -----------------------------------------------------------------------------
 app = dash.Dash(__name__, update_title=None)
-
+server = app.server
 app.layout = html.Div(style={
     "backgroundColor": "#ffffff", "fontFamily": "system-ui, -apple-system, sans-serif",
     "height": "100vh", "display": "flex", "flexDirection": "column", "overflow": "hidden"
