@@ -13,7 +13,6 @@ st.set_page_config(
 # ─────────────────────────────────────────────────────────────
 # 1. IDENTIDADE VISUAL PREMIUM (PALETA EXECUTIVA MINIMALISTA)
 # ─────────────────────────────────────────────────────────────
-# Tons dessaturados, elegantes e focados em contraste profissional
 COLOR_PALETTE = {
     "1": {"name": "CONCILIAÇÃO E RESULTADO", "main": "#475569", "bg": "#f8fafc", "border": "#cbd5e1", "text": "#1e293b"},
     "2": {"name": "ANÁLISE FINAL",           "main": "#d97706", "bg": "#fffbeb", "border": "#fde68a", "text": "#78350f"},
@@ -49,28 +48,24 @@ def wrap_text(text, max_chars=30):
             current_length = len(word) + 1
     if current_line:
         lines.append(" ".join(current_line))
-    return lines[:3]  # Limita a 3 linhas no card visual
+    return lines[:3]
 
 # ─────────────────────────────────────────────────────────────
 # 2. GERAÇÃO DE CARDS PREMIUM VIA SVG (VETORIAL)
 # ─────────────────────────────────────────────────────────────
 def create_svg_card(title, subtitle, palette_item, is_active=False):
-    """Gera um card estilo Miro com sombra, bordas finas e tag lateral colorida"""
     title_lines = wrap_text(title, max_chars=26)
     
-    # Renderização dinâmica das linhas de texto do título
     y_start = 45 if len(title_lines) == 1 else (38 if len(title_lines) == 2 else 32)
     text_svg = ""
     for i, line in enumerate(title_lines):
         text_svg += f'<text x="25" y="{y_start + (i * 18)}" font-family="Inter, Segoe UI, sans-serif" font-size="13" font-weight="700" fill="{palette_item["text"]}">{line}</text>'
     
-    # Elemento de subtítulo/descrição curta
     sub_text = subtitle.replace(title, "").strip()[:40]
     if sub_text:
         sub_text = sub_text + "..." if len(sub_text) >= 40 else sub_text
         text_svg += f'<text x="25" y="92" font-family="Inter, Segoe UI, sans-serif" font-size="10" fill="#64748b">{sub_text}</text>'
 
-    # Efeito de iluminação/borda se estiver selecionado
     stroke_color = "#2563eb" if is_active else palette_item["border"]
     stroke_width = "3" if is_active else "1"
     shadow_opacity = "0.25" if is_active else "0.08"
@@ -93,7 +88,7 @@ def create_svg_card(title, subtitle, palette_item, is_active=False):
     return f"data:image/svg+xml;base64,{b64}"
 
 # ─────────────────────────────────────────────────────────────
-# 3. CONVERSÃO E FILTRAGEM DOS DADOS DO CANVAS
+# 3. CARREGAMENTO E MAPEAMENTO DE DADOS
 # ─────────────────────────────────────────────────────────────
 @st.cache_data
 def load_canvas_data(filename="FLUXO_FINAL.canvas"):
@@ -113,7 +108,6 @@ def load_canvas_data(filename="FLUXO_FINAL.canvas"):
     for n in raw_nodes:
         if n.get("type") == "text" and n["id"] not in SKIP_GROUP_IDS:
             color_key = n.get("color", "1")
-            palette = COLOR_PALETTE.get(color_key, COLOR_PALETTE["1"])
             full_text = n.get("text", "").replace("[[", "").replace("]]", "")
             label = clean_label(full_text)
             
@@ -134,7 +128,7 @@ def load_canvas_data(filename="FLUXO_FINAL.canvas"):
                 "id": e["id"],
                 "from": e["fromNode"],
                 "to": e["toNode"],
-                "arrows": {"to": {"enabled": true, "type": "arrow"}},
+                "arrows": {"to": {"enabled": True, "type": "arrow"}},
                 "color": {"color": palette["main"], "opacity": 0.35, "highlight": "#2563eb", "hover": "#2563eb"},
                 "width": 1.5,
                 "smooth": {"type": "cubicBezier", "roundness": 0.5}
@@ -182,7 +176,6 @@ st.markdown("""
 
 st.markdown("### Arquitetura de Processos <span style='font-size:15px; color:#64748b; font-weight:normal;'>— Controladoria Premium</span>", unsafe_allow_html=True)
 
-# Legenda Horizontal Sofisticada
 legenda_html = "".join([
     f"<span style='display:inline-block; margin-right:8px; margin-bottom:6px; padding:4px 12px; border-radius:6px; font-size:11px; font-weight:600; background:{v['bg']}; border:1px solid {v['border']}; color:{v['text']};'><span style='color:{v['main']}; margin-right:4px;'>■</span> {v['name']}</span>"
     for k, v in COLOR_PALETTE.items()
@@ -209,7 +202,6 @@ with st.sidebar:
         palette = COLOR_PALETTE[node_info["color_key"]]
         up_nodes, down_nodes = get_lineage(active_id, vis_edges)
         
-        # Grid Interno de KPIs na Sidebar
         c1, c2 = st.columns(2)
         with c1:
             st.markdown(f"<div class='metric-card'><div class='metric-val'>{len(up_nodes)}</div><div class='metric-lbl'>Origens</div></div>", unsafe_allow_html=True)
@@ -236,12 +228,10 @@ for nid, n in nodes_map.items():
     palette = COLOR_PALETTE[n["color_key"]]
     is_focal = (nid == active_id)
     
-    # Decisão de Opacidade baseada na relevância da seleção (Fade Out inteligente)
     if active_id:
         show_up = ("Integrada" in filter_mode or "Origens" in filter_mode) and nid in up_nodes
         show_down = ("Integrada" in filter_mode or "Impactos" in filter_mode) and nid in down_nodes
         if not (is_focal or show_up or show_down):
-            # Nós sem relação direta ficam discretizados
             final_vis_nodes.append({
                 "id": nid, "x": n["x"], "y": n["y"], "shape": "image",
                 "image": create_svg_card(n["label"], n["full_text"], palette, is_active=False),
@@ -249,13 +239,11 @@ for nid, n in nodes_map.items():
             })
             continue
 
-    # Nós ativos ou pertencentes à linhagem filtrada
     img_url = create_svg_card(n["label"], n["full_text"], palette, is_active=is_focal)
     final_vis_nodes.append({
         "id": nid, "x": n["x"], "y": n["y"], "shape": "image", "image": img_url, "opacity": 1.0, "fixed": True
     })
 
-# Alteração dinâmica nas conexões para acompanhar o foco do usuário
 final_vis_edges = []
 for e in vis_edges:
     edge_copy = dict(e)
@@ -286,7 +274,6 @@ html_source = f"""
             width: 100%; 
             height: 76vh; 
             background-color: #f8fafc; 
-            /* Efeito de Malha de Pontos (Dot Grid) */
             background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
             background-size: 24px 24px;
             border: 1px solid #e2e8f0; 
