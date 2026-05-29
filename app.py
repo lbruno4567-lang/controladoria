@@ -11,15 +11,16 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────
-# 1. PALETA FIEL AO OBSIDIAN CANVAS — TEMA CLARO
+# 1. IDENTIDADE VISUAL PREMIUM (PALETA EXECUTIVA MINIMALISTA)
 # ─────────────────────────────────────────────────────────────
-OBS_COLORS = {
-    "1": {"name": "CONCILIAÇÃO E RESULTADO", "node_bg": "#ffffff", "node_border": "#8b8b8b", "node_text": "#1a1a1a", "edge": "#8b8b8b"},
-    "2": {"name": "ANÁLISE FINAL",           "node_bg": "#fffdf5", "node_border": "#e6a817", "node_text": "#4a3200", "edge": "#d4920f"},
-    "3": {"name": "APURAÇÃO DE POCs",        "node_bg": "#f5fdf6", "node_border": "#2ea043", "node_text": "#0d3319", "edge": "#2ea043"},
-    "4": {"name": "CONFERÊNCIAS NOMINAIS",   "node_bg": "#fff5f5", "node_border": "#e05252", "node_text": "#3d0f0f", "edge": "#d44545"},
-    "5": {"name": "BASES DE ORÇAMENTO",      "node_bg": "#f4f8ff", "node_border": "#3b7dd8", "node_text": "#0c2252", "edge": "#3b7dd8"},
-    "6": {"name": "GATILHOS",                "node_bg": "#faf5ff", "node_border": "#8b5cf6", "node_text": "#2d1266", "edge": "#8b5cf6"},
+# Tons dessaturados, elegantes e focados em contraste profissional
+COLOR_PALETTE = {
+    "1": {"name": "CONCILIAÇÃO E RESULTADO", "main": "#475569", "bg": "#f8fafc", "border": "#cbd5e1", "text": "#1e293b"},
+    "2": {"name": "ANÁLISE FINAL",           "main": "#d97706", "bg": "#fffbeb", "border": "#fde68a", "text": "#78350f"},
+    "3": {"name": "APURAÇÃO DE POCs",        "main": "#16a34a", "bg": "#f0fdf4", "border": "#bbf7d0", "text": "#14532d"},
+    "4": {"name": "CONFERÊNCIAS NOMINAIS",   "main": "#dc2626", "bg": "#fef2f2", "border": "#fecaca", "text": "#7f1d1d"},
+    "5": {"name": "BASES DE ORÇAMENTO",      "main": "#2563eb", "bg": "#eff6ff", "border": "#bfdbfe", "text": "#1e3a8a"},
+    "6": {"name": "GATILHOS",                "main": "#7c3aed", "bg": "#f5f3ff", "border": "#ddd6fe", "text": "#4c1d95"},
 }
 
 SKIP_GROUP_IDS = {"4392351365515c6d", "6283cfcedbf60137"}
@@ -29,12 +30,70 @@ def clean_label(raw: str) -> str:
     lines = [l.strip() for l in text.split("\n") if l.strip()]
     if not lines: return raw
     first = lines[0]
-    if "/" in first and len(first) > 40:
+    if "/" in first and len(first) > 35:
         first = first.split("/")[-1]
-    return first + ("..." if len(lines) > 1 else "")
+    return first
+
+def wrap_text(text, max_chars=30):
+    words = text.split()
+    lines = []
+    current_line = []
+    current_length = 0
+    for word in words:
+        if current_length + len(word) <= max_chars:
+            current_line.append(word)
+            current_length += len(word) + 1
+        else:
+            lines.append(" ".join(current_line))
+            current_line = [word]
+            current_length = len(word) + 1
+    if current_line:
+        lines.append(" ".join(current_line))
+    return lines[:3]  # Limita a 3 linhas no card visual
 
 # ─────────────────────────────────────────────────────────────
-# 2. CARREGAMENTO E MAPEAMENTO DE DADOS
+# 2. GERAÇÃO DE CARDS PREMIUM VIA SVG (VETORIAL)
+# ─────────────────────────────────────────────────────────────
+def create_svg_card(title, subtitle, palette_item, is_active=False):
+    """Gera um card estilo Miro com sombra, bordas finas e tag lateral colorida"""
+    title_lines = wrap_text(title, max_chars=26)
+    
+    # Renderização dinâmica das linhas de texto do título
+    y_start = 45 if len(title_lines) == 1 else (38 if len(title_lines) == 2 else 32)
+    text_svg = ""
+    for i, line in enumerate(title_lines):
+        text_svg += f'<text x="25" y="{y_start + (i * 18)}" font-family="Inter, Segoe UI, sans-serif" font-size="13" font-weight="700" fill="{palette_item["text"]}">{line}</text>'
+    
+    # Elemento de subtítulo/descrição curta
+    sub_text = subtitle.replace(title, "").strip()[:40]
+    if sub_text:
+        sub_text = sub_text + "..." if len(sub_text) >= 40 else sub_text
+        text_svg += f'<text x="25" y="92" font-family="Inter, Segoe UI, sans-serif" font-size="10" fill="#64748b">{sub_text}</text>'
+
+    # Efeito de iluminação/borda se estiver selecionado
+    stroke_color = "#2563eb" if is_active else palette_item["border"]
+    stroke_width = "3" if is_active else "1"
+    shadow_opacity = "0.25" if is_active else "0.08"
+    shadow_blur = "10" if is_active else "5"
+
+    svg = f"""
+    <svg xmlns="http://www.w3.org/2000/svg" width="260" height="110">
+        <defs>
+            <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+                <feDropShadow dx="0" dy="4" stdDeviation="{shadow_blur}" flood-color="#0f172a" flood-opacity="{shadow_opacity}"/>
+            </filter>
+        </defs>
+        <rect x="5" y="5" width="245" height="100" rx="10" fill="{palette_item["bg"]}" stroke="{stroke_color}" stroke-width="{stroke_width}" filter="url(#shadow)" />
+        <path d="M 5 15 A 10 10 0 0 1 15 5 L 15 5 L 15 105 L 15 105 A 10 10 0 0 1 5 95 Z" fill="{palette_item["main"]}" />
+        {text_svg}
+    </svg>
+    """
+    import base64
+    b64 = base64.b64encode(svg.encode('utf-8')).decode('utf-8')
+    return f"data:image/svg+xml;base64,{b64}"
+
+# ─────────────────────────────────────────────────────────────
+# 3. CONVERSÃO E FILTRAGEM DOS DADOS DO CANVAS
 # ─────────────────────────────────────────────────────────────
 @st.cache_data
 def load_canvas_data(filename="FLUXO_FINAL.canvas"):
@@ -51,50 +110,40 @@ def load_canvas_data(filename="FLUXO_FINAL.canvas"):
     vis_nodes = []
     vis_edges = []
     
-    # Processar nós válidos (ignora grupos na renderização direta para focar na árvore de processos)
     for n in raw_nodes:
         if n.get("type") == "text" and n["id"] not in SKIP_GROUP_IDS:
             color_key = n.get("color", "1")
-            c = OBS_COLORS.get(color_key, OBS_COLORS["1"])
-            label = clean_label(n.get("text", ""))
+            palette = COLOR_PALETTE.get(color_key, COLOR_PALETTE["1"])
+            full_text = n.get("text", "").replace("[[", "").replace("]]", "")
+            label = clean_label(full_text)
             
             nodes_map[n["id"]] = {
                 "id": n["id"],
                 "label": label,
-                "full_text": n.get("text", "").replace("[[", "").replace("]]", ""),
-                "color_key": color_key
-            }
-            
-            vis_nodes.append({
-                "id": n["id"],
-                "label": label,
-                "shape": "box",
+                "full_text": full_text,
+                "color_key": color_key,
                 "x": n["x"],
-                "y": n["y"],
-                "color": {"background": c["node_bg"], "border": c["node_border"], "highlight": {"background": "#ffffff", "border": "#0066cc"}},
-                "font": {"color": c["node_text"], "size": 12, "face": "Segoe UI, sans-serif"},
-                "borderWidth": 1.5,
-                "margin": 10
-            })
+                "y": n["y"]
+            }
             
     for e in raw_edges:
         if e["fromNode"] in nodes_map and e["toNode"] in nodes_map:
             color_key = e.get("color", "1")
-            c = OBS_COLORS.get(color_key, OBS_COLORS["1"])
+            palette = COLOR_PALETTE.get(color_key, COLOR_PALETTE["1"])
             vis_edges.append({
                 "id": e["id"],
                 "from": e["fromNode"],
                 "to": e["toNode"],
-                "arrows": "to",
-                "color": {"color": c["edge"], "opacity": 0.45, "highlight": "#16a34a"},
-                "smooth": {"type": "cubicBezier", "roundness": 0.6}
+                "arrows": {"to": {"enabled": true, "type": "arrow"}},
+                "color": {"color": palette["main"], "opacity": 0.35, "highlight": "#2563eb", "hover": "#2563eb"},
+                "width": 1.5,
+                "smooth": {"type": "cubicBezier", "roundness": 0.5}
             })
             
     return vis_nodes, vis_edges, nodes_map
 
-vis_nodes, vis_edges, nodes_map = load_canvas_data()
+_, vis_edges, nodes_map = load_canvas_data()
 
-# Rastreamento Recursivo de Linhagem (Upstream/Downstream)
 def get_lineage(active_id, edges):
     upstream_nodes, downstream_nodes = set(), set()
     
@@ -117,104 +166,132 @@ def get_lineage(active_id, edges):
     return list(upstream_nodes), list(downstream_nodes)
 
 # ─────────────────────────────────────────────────────────────
-# 3. INTERFACE E SIDEBAR (PAINEL DE DETALHES)
+# 4. INTERFACE E SIDEBAR EXECUTIVA
 # ─────────────────────────────────────────────────────────────
-
-# Injetar estilo CSS para fixar a identidade corporativa clara
 st.markdown("""
     <style>
-        .block-container { padding-top: 1.5rem; background-color: #f6f8fb; }
-        .stSelectbox label { font-size: 11px !important; font-weight: 700; color: #9ca3af; text-transform: uppercase; }
-        div[data-testid="stSidebarUserContent"] { background-color: #ffffff; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        .block-container { padding-top: 1.5rem; background-color: #f8fafc; font-family: 'Inter', sans-serif; }
+        .stSelectbox label { font-size: 11px !important; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+        div[data-testid="stSidebarUserContent"] { background-color: #ffffff; padding: 1.5rem 1rem; }
+        .metric-card { background: #f1f5f9; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #e2e8f0; }
+        .metric-val { font-size: 18px; font-weight: 700; color: #0f172a; }
+        .metric-lbl { font-size: 10px; color: #64748b; text-transform: uppercase; }
     </style>
 """, unsafe_allow_html=True)
 
-# Título da Barra Superior
-st.markdown("### Fluxo de Fechamento <span style='font-size:16px; color:#6b7280; font-weight:normal;'>— Controladoria</span>", unsafe_allow_html=True)
+st.markdown("### Arquitetura de Processos <span style='font-size:15px; color:#64748b; font-weight:normal;'>— Controladoria Premium</span>", unsafe_allow_html=True)
 
-# Renderizar Legenda em Linha
+# Legenda Horizontal Sofisticada
 legenda_html = "".join([
-    f"<span style='display:inline-block; margin-right:10px; padding:3px 10px; border-radius:15px; font-size:11px; font-weight:600; background:{OBS_COLORS[k]['node_bg']}; border:1px solid {OBS_COLORS[k]['node_border']}; color:{OBS_COLORS[k]['node_text']};'>● {v['name']}</span>"
-    for k, v in OBS_COLORS.items()
+    f"<span style='display:inline-block; margin-right:8px; margin-bottom:6px; padding:4px 12px; border-radius:6px; font-size:11px; font-weight:600; background:{v['bg']}; border:1px solid {v['border']}; color:{v['text']};'><span style='color:{v['main']}; margin-right:4px;'>■</span> {v['name']}</span>"
+    for k, v in COLOR_PALETTE.items()
 ])
-st.markdown(f"<div style='margin-bottom:15px;'>{legenda_html}</div>", unsafe_allow_html=True)
+st.markdown(f"<div style='margin-bottom:20px;'>{legenda_html}</div>", unsafe_allow_html=True)
 
-# Configuração do Sidebar Dinâmico
 with st.sidebar:
-    st.markdown("### ⇄ Painel de Controle")
+    st.markdown("<h2 style='font-size:18px; font-weight:700; color:#0f172a; margin-bottom:15px;'>⇄ Navegação</h2>", unsafe_allow_html=True)
     
     search_options = {v["label"]: k for k, v in nodes_map.items()}
-    selected_label = st.selectbox("Buscar processo:", [""] + list(search_options.keys()))
+    selected_label = st.selectbox("Filtro de Processo Focal:", [""] + list(search_options.keys()))
     active_id = search_options.get(selected_label, None)
     
     filter_mode = st.radio(
-        "Modo de linhagem:",
-        ["⟷ Cadeia completa", "← Apenas origens (upstream)", "→ Apenas impactos (downstream)"],
+        "Isolamento de Linhagem:",
+        ["⟷ Cadeia Integrada (Ambos)", "← Origens Analíticas (Upstream)", "→ Impactos Operacionais (Downstream)"],
         index=0
     )
     
-    st.markdown("---")
+    st.markdown("<br>", unsafe_allow_html=True)
     
     if active_id:
         node_info = nodes_map[active_id]
-        c = OBS_COLORS[node_info["color_key"]]
-        
-        # Bloco de Destaque do Nó Selecionado
-        st.markdown(f"""
-            <div style="background-color: {c['node_bg']}; border: 2px solid {c['node_border']}; border-radius: 8px; padding: 14px; margin-bottom: 15px;">
-                <div style="font-size: 9px; font-weight: 700; color: {c['node_border']}; text-transform: uppercase;">Selecionado</div>
-                <div style="font-size: 15px; font-weight: 700; color: {c['node_text']};">{node_info['label']}</div>
-                <div style="font-size: 12px; color: #6b7280; margin-top: 5px;">{node_info['full_text']}</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
+        palette = COLOR_PALETTE[node_info["color_key"]]
         up_nodes, down_nodes = get_lineage(active_id, vis_edges)
         
-        # Seção Upstream
-        if "completa" in filter_mode or "origens" in filter_mode:
-            st.markdown(f"**Origens ({len(up_nodes)})**")
-            if up_nodes:
-                chips = "".join([f"<span style='display:inline-block; margin:2px; padding:3px 8px; border-radius:4px; font-size:11px; background:#e8f0fd; border:1px solid #3b7dd8; color:#1e4a8a;'>{nodes_map[n]['label']}</span>" for n in up_nodes])
-                st.markdown(f"<div style='max-height:120px; overflow-y:auto;'>{chips}</div>", unsafe_allow_html=True)
-            else:
-                st.caption("_Processo inicial — sem dependências._")
-                
-        # Seção Downstream
-        if "completa" in filter_mode or "impactos" in filter_mode:
-            st.markdown(f"**Impactos ({len(down_nodes)})**")
-            if down_nodes:
-                chips = "".join([f"<span style='display:inline-block; margin:2px; padding:3px 8px; border-radius:4px; font-size:11px; background:#edfaf0; border:1px solid #2ea043; color:#1a6128;'>{nodes_map[n]['label']}</span>" for n in down_nodes])
-                st.markdown(f"<div style='max-height:120px; overflow-y:auto;'>{chips}</div>", unsafe_allow_html=True)
-            else:
-                st.caption("_Etapa final — não alimenta outros processos._")
+        # Grid Interno de KPIs na Sidebar
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(f"<div class='metric-card'><div class='metric-val'>{len(up_nodes)}</div><div class='metric-lbl'>Origens</div></div>", unsafe_allow_html=True)
+        with c2:
+            st.markdown(f"<div class='metric-card'><div class='metric-val'>{len(down_nodes)}</div><div class='metric-lbl'>Impactados</div></div>", unsafe_allow_html=True)
+            
+        st.markdown(f"""
+            <div style="background-color: {palette['bg']}; border: 1px solid {palette['border']}; border-left: 4px solid {palette['main']}; border-radius: 6px; padding: 14px; margin-top: 15px;">
+                <div style="font-size: 10px; font-weight: 700; color: {palette['main']}; text-transform: uppercase; margin-bottom:4px;">Documentação do Nó</div>
+                <div style="font-size: 14px; font-weight: 700; color: {palette['text']};">{node_info['label']}</div>
+                <div style="font-size: 12px; color: #475569; margin-top: 8px; line-height: 1.4; white-space: pre-wrap;">{node_info['full_text']}</div>
+            </div>
+        """, unsafe_allow_html=True)
     else:
-        st.info("💡 Clique ou busque um processo na lista acima para analisar suas amarrações e dependências críticas.")
+        st.info("💡 Escolha uma etapa para analisar as conexões de entrada/saída e isolar dependências críticas.")
 
 # ─────────────────────────────────────────────────────────────
-# 4. COMPONENTE VISUAL DO CANVAS (VIS.JS INTERATIVO)
+# 5. RECONSTRUÇÃO DOS NÓS COM IMAGENS SVG DINÂMICAS
 # ─────────────────────────────────────────────────────────────
-# Modificar dinamicamente as cores caso haja foco ativo
-if active_id:
-    up_nodes, down_nodes = get_lineage(active_id, vis_edges)
-    for node in vis_nodes:
-        nid = node["id"]
-        if nid == active_id:
-            node["borderWidth"] = 3
-        elif ("completa" in filter_mode or "origens" in filter_mode) and nid in up_nodes:
-            node["color"] = {"background": "#e8f0fd", "border": "#2563eb"}
-        elif ("completa" in filter_mode or "impactos" in filter_mode) and nid in down_nodes:
-            node["color"] = {"background": "#edfaf0", "border": "#16a34a"}
+final_vis_nodes = []
+up_nodes, down_nodes = get_lineage(active_id, vis_edges) if active_id else ([], [])
+
+for nid, n in nodes_map.items():
+    palette = COLOR_PALETTE[n["color_key"]]
+    is_focal = (nid == active_id)
+    
+    # Decisão de Opacidade baseada na relevância da seleção (Fade Out inteligente)
+    if active_id:
+        show_up = ("Integrada" in filter_mode or "Origens" in filter_mode) and nid in up_nodes
+        show_down = ("Integrada" in filter_mode or "Impactos" in filter_mode) and nid in down_nodes
+        if not (is_focal or show_up or show_down):
+            # Nós sem relação direta ficam discretizados
+            final_vis_nodes.append({
+                "id": nid, "x": n["x"], "y": n["y"], "shape": "image",
+                "image": create_svg_card(n["label"], n["full_text"], palette, is_active=False),
+                "opacity": 0.12, "fixed": True
+            })
+            continue
+
+    # Nós ativos ou pertencentes à linhagem filtrada
+    img_url = create_svg_card(n["label"], n["full_text"], palette, is_active=is_focal)
+    final_vis_nodes.append({
+        "id": nid, "x": n["x"], "y": n["y"], "shape": "image", "image": img_url, "opacity": 1.0, "fixed": True
+    })
+
+# Alteração dinâmica nas conexões para acompanhar o foco do usuário
+final_vis_edges = []
+for e in vis_edges:
+    edge_copy = dict(e)
+    if active_id:
+        is_up_edge = edge_copy["to"] == active_id or (edge_copy["to"] in up_nodes and edge_copy["from"] in up_nodes)
+        is_down_edge = edge_copy["from"] == active_id or (edge_copy["from"] in down_nodes and edge_copy["to"] in down_nodes)
+        
+        if ("Integrada" in filter_mode and (is_up_edge or is_down_edge)) or \
+           ("Origens" in filter_mode and is_up_edge) or \
+           ("Impactos" in filter_mode and is_down_edge):
+            edge_copy["width"] = 2.5
+            edge_copy["color"] = {"color": "#2563eb", "opacity": 0.85}
+            edge_copy["arrows"] = {"to": {"enabled": True, "scaleFactor": 1.2}}
         else:
-            node["color"]["opacity"] = 0.15
+            edge_copy["color"] = {"opacity": 0.04}
+    final_vis_edges.append(edge_copy)
 
-# Construção da aplicação injetada via JavaScript no Vis.js
+# ─────────────────────────────────────────────────────────────
+# 6. COMPONENTE INJETADO COM GRID CONFIGURADO (ESTILO FIGMA)
+# ─────────────────────────────────────────────────────────────
 html_source = f"""
 <!DOCTYPE html>
 <html>
 <head>
     <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <style type="text/css">
-        #network-canvas {{ width: 100%; height: 75vh; background-color: #f6f8fb; border: 1px solid #e8eaed; border-radius: 8px; }}
+        #network-canvas {{ 
+            width: 100%; 
+            height: 76vh; 
+            background-color: #f8fafc; 
+            /* Efeito de Malha de Pontos (Dot Grid) */
+            background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+            background-size: 24px 24px;
+            border: 1px solid #e2e8f0; 
+            border-radius: 12px; 
+        }}
     </style>
 </head>
 <body>
@@ -222,13 +299,20 @@ html_source = f"""
     <script type="text/javascript">
         var container = document.getElementById('network-canvas');
         var data = {{
-            nodes: new vis.DataSet({json.dumps(vis_nodes)}),
-            edges: new vis.DataSet({json.dumps(vis_edges)})
+            nodes: new vis.DataSet({json.dumps(final_vis_nodes)}),
+            edges: new vis.DataSet({json.dumps(final_vis_edges)})
         }};
         var options = {{
             physics: {{ enabled: false }},
-            interaction: {{ dragNodes: true, zoomView: true, dragView: true }},
-            nodes: {{ fixed: true }}
+            interaction: {{ 
+                dragNodes: false, 
+                zoomView: true, 
+                dragView: true,
+                hover: true
+            }},
+            nodes: {{
+                useBorderWithImage: false
+            }}
         }};
         var network = new vis.Network(container, data, options);
     </script>
@@ -236,6 +320,5 @@ html_source = f"""
 </html>
 """
 
-# Renderiza o Canvas no corpo principal da página
-components.html(html_source, height=600)
-st.caption("ℹ️ Use o scroll do mouse para Zoom. Clique e arraste o fundo para navegar pelo mapa.")
+components.html(html_source, height=620)
+st.caption("⚙️ Controles de Tela: Use a rolagem do mouse para dar zoom. Clique e arraste na malha de pontos para navegar.")
